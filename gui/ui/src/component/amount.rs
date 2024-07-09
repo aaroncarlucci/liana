@@ -8,33 +8,14 @@ pub fn amount<'a, T: 'a>(a: &Amount) -> Row<'a, T> {
 
 pub fn amount_with_size<'a, T: 'a>(a: &Amount, size: u16) -> Row<'a, T> {
     let spacing = if size > P1_SIZE { 10 } else { 5 };
-    let sats = format!("{:.8}", a.to_btc());
-    assert!(sats.len() >= 9);
-    let row = Row::new()
-        .spacing(spacing)
-        .push(split_digits(sats[0..sats.len() - 6].to_string(), size, true).into())
-        .push(if a.to_sat() < 1_000_000 {
-            split_digits(sats[sats.len() - 6..sats.len() - 3].to_string(), size, true).into()
-        } else {
-            Row::new()
-                .push(
-                    text(sats[sats.len() - 6..sats.len() - 3].to_string())
-                        .bold()
-                        .size(size),
-                )
-                .into()
-        })
-        .push(if a.to_sat() < 1000 {
-            split_digits(sats[sats.len() - 3..sats.len()].to_string(), size, true).into()
-        } else {
-            Row::new()
-                .push(
-                    text(sats[sats.len() - 3..sats.len()].to_string())
-                        .bold()
-                        .size(size),
-                )
-                .into()
-        });
+
+    let (btc, sats) = split_digits(&a.to_btc().to_string());
+    let row = Row::new().spacing(spacing).push(
+        Row::new()
+            .push(text(btc).size(size).bold())
+            .push(text(".").size(size))
+            .push(text(sats).size(size)),
+    );
 
     Row::with_children(vec![
         row.into(),
@@ -46,30 +27,14 @@ pub fn amount_with_size<'a, T: 'a>(a: &Amount, size: u16) -> Row<'a, T> {
 
 pub fn unconfirmed_amount_with_size<'a, T: 'a>(a: &Amount, size: u16) -> Row<'a, T> {
     let spacing = if size > P1_SIZE { 10 } else { 5 };
-    let sats = format!("{:.8}", a.to_btc());
-    assert!(sats.len() >= 9);
-    let row = Row::new()
-        .spacing(spacing)
-        .push(split_digits(sats[0..sats.len() - 6].to_string(), size, false).into())
-        .push(if a.to_sat() < 1_000_000 {
-            split_digits(
-                sats[sats.len() - 6..sats.len() - 3].to_string(),
-                size,
-                false,
-            )
-            .into()
-        } else {
-            Row::new()
-                .push(text(sats[sats.len() - 6..sats.len() - 3].to_string()).size(size))
-                .into()
-        })
-        .push(if a.to_sat() < 1000 {
-            split_digits(sats[sats.len() - 3..sats.len()].to_string(), size, false).into()
-        } else {
-            Row::new()
-                .push(text(sats[sats.len() - 3..sats.len()].to_string()).size(size))
-                .into()
-        });
+
+    let (btc, sats) = split_digits(&a.to_btc().to_string());
+    let row = Row::new().spacing(spacing).push(
+        Row::new()
+            .push(text(btc).size(size))
+            .push(text(".").size(size))
+            .push(text(sats).size(size)),
+    );
 
     Row::with_children(vec![
         row.into(),
@@ -79,25 +44,72 @@ pub fn unconfirmed_amount_with_size<'a, T: 'a>(a: &Amount, size: u16) -> Row<'a,
     .align_items(iced::Alignment::Center)
 }
 
-fn split_digits<'a, T: 'a>(mut s: String, size: u16, bold: bool) -> impl Into<Element<'a, T>> {
-    let prefixes = vec!["0.00", "0.0", "0.", "000", "00", "0"];
-    for prefix in prefixes {
-        if s.starts_with(prefix) {
-            let right = s.split_off(prefix.len());
-            return Row::new()
-                .push(text(s).size(size).style(color::GREY_3))
-                .push_maybe(if right.is_empty() {
-                    None
-                } else if bold {
-                    Some(text(right).bold().size(size))
-                } else {
-                    Some(text(right).size(size))
-                });
-        }
-    }
-    if bold {
-        Row::new().push(text(s).bold().size(size))
-    } else {
-        Row::new().push(text(s).size(size))
+fn split_digits(amount: &str) -> (String, String) {
+    let (integer, fraction) = match amount.split_once('.') {
+        Some((i, f)) => (i, f),
+        None => (amount, "00000000"),
+    };
+
+    let mut integer = integer
+        .chars()
+        .collect::<Vec<_>>()
+        .rchunks(3)
+        .map(|c| c.iter().collect::<String>())
+        .collect::<Vec<_>>();
+    integer.reverse();
+    let integer = integer.join(" ");
+
+    let fraction = format!("{:0<8}", fraction);
+    let mut fraction = fraction
+        .chars()
+        .collect::<Vec<_>>()
+        .rchunks(3)
+        .map(|c| c.iter().collect::<String>())
+        .collect::<Vec<_>>();
+    fraction.reverse();
+    let fraction = fraction.join(" ");
+
+    (integer, fraction)
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    #[test]
+    fn test_split_digits() {
+        assert_eq!(
+            ("1 000".to_string(), "12 345 678".to_string()),
+            split_digits("1000.12345678")
+        );
+        assert_eq!(
+            ("1".to_string(), "12 345 678".to_string()),
+            split_digits("1.12345678")
+        );
+        assert_eq!(
+            ("0".to_string(), "12 345 678".to_string()),
+            split_digits("0.12345678")
+        );
+        assert_eq!(
+            ("0".to_string(), "00 000 001".to_string()),
+            split_digits("0.00000001")
+        );
+        assert_eq!(
+            ("1".to_string(), "00 000 000".to_string()),
+            split_digits("1")
+        );
+        assert_eq!(
+            ("5 100".to_string(), "00 000 000".to_string()),
+            split_digits("5100.00000000")
+        );
+        assert_eq!(
+            ("1 000".to_string(), "10 000 000".to_string()),
+            split_digits("1000.1")
+        );
+        assert_eq!(
+            ("1 000".to_string(), "10 100 000".to_string()),
+            split_digits("1000.101")
+        );
     }
 }
